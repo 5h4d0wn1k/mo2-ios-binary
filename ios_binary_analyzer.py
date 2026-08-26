@@ -62,6 +62,10 @@ class MachOAnalyzer:
     LC_CODE_SIGNATURE = 0x1D
     LC_ENCRYPTION_INFO = 0x21
     LC_ENCRYPTION_INFO_64 = 0x2C
+    LC_LOAD_DYLIB = 0x0C
+    LC_LOAD_WEAK_DYLIB = 0x80000028
+    LC_MAIN = 0x80000018
+    LC_RPATH = 0x80000034
 
     LC_NAMES = {
         0x01: 'LC_SEGMENT',
@@ -688,7 +692,7 @@ def create_sample_binary():
     sample_path = '/tmp/sample_macho.bin'
 
     # Create a minimal valid Mach-O-like structure
-    data = bytearray()
+    data = bytearray(4096)
 
     # Mach-O header (64-bit)
     struct.pack_into('<I', data, 0, MachOAnalyzer.MAGIC_64)  # magic
