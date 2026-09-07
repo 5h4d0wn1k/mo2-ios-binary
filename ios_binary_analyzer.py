@@ -14,6 +14,8 @@ import sys
 import json
 import re
 import base64
+import math
+import argparse
 from collections import defaultdict
 
 
@@ -687,130 +689,243 @@ class KeychainAnalyzer:
                 print(f"    ... and {len(refs) - 5} more")
 
 
-def create_sample_binary():
-    """Create a sample binary file for demonstration."""
-    sample_path = '/tmp/sample_macho.bin'
+def extract_ascii_strings(data, min_length=6):
+    """Extract printable ASCII strings with their file offsets."""
+    strings = []
+    current = []
+    start = 0
+    for i, b in enumerate(data):
+        if 32 <= b <= 126:
+            if not current:
+                start = i
+            current.append(b)
+        else:
+            if len(current) >= min_length:
+                strings.append({"offset": start, "length": len(current),
+                                "value": bytes(current).decode("ascii", errors="replace")})
+            current = []
+    if len(current) >= min_length:
+        strings.append({"offset": start, "length": len(current),
+                        "value": bytes(current).decode("ascii", errors="replace")})
+    return strings
 
-    # Create a minimal valid Mach-O-like structure
+
+def shannon_entropy(data, block=4096):
+    """Compute overall and per-block Shannon entropy."""
+    if not data:
+        return {"overall": 0.0, "blocks": []}
+    freq = {}
+    for b in data:
+        freq[b] = freq.get(b, 0) + 1
+    n = len(data)
+    overall = -sum(c / n * math.log2(c / n) for c in freq.values() if c)
+
+    blocks = []
+    for off in range(0, len(data), block):
+        chunk = data[off:off + block]
+        if not chunk:
+            break
+        f2 = {}
+        for b in chunk:
+            f2[b] = f2.get(b, 0) + 1
+        m = len(chunk)
+        e = -sum(c / m * math.log2(c / m) for c in f2.values() if c)
+        blocks.append({"offset": off, "length": len(chunk), "entropy": round(e, 4)})
+    return {"overall": round(overall, 4), "blocks": blocks}
+
+
+def create_sample_binary(path):
+    """Create a crafted, deterministic Mach-O 64-bit sample binary."""
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+
     data = bytearray(4096)
 
-    # Mach-O header (64-bit)
-    struct.pack_into('<I', data, 0, MachOAnalyzer.MAGIC_64)  # magic
-    struct.pack_into('<I', data, 4, 0x0100000C)  # cpu_type (arm64)
-    struct.pack_into('<I', data, 8, 0x00000000)  # cpu_subtype
-    struct.pack_into('<I', data, 12, MachOAnalyzer.MH_EXECUTE)  # file type
-    struct.pack_into('<I', data, 16, 4)  # ncmds
-    struct.pack_into('<I', data, 20, 256)  # sizeofcmds
-    struct.pack_into('<I', data, 24, 0x00000085)  # flags (PIE | DYLDLINK)
+    struct.pack_into('<I', data, 0, MachOAnalyzer.MAGIC_64)
+    struct.pack_into('<I', data, 4, 0x0100000C)
+    struct.pack_into('<I', data, 8, 0x00000000)
+    struct.pack_into('<I', data, 12, MachOAnalyzer.MH_EXECUTE)
+    struct.pack_into('<I', data, 16, 4)
+    struct.pack_into('<I', data, 20, 256)
+    struct.pack_into('<I', data, 24, 0x00000485)  # NOUNDEFS|DYLDLINK|TWOLEVEL|PIE
 
-    # UUID command
     offset = 32
     struct.pack_into('<I', data, offset, MachOAnalyzer.LC_UUID)
     struct.pack_into('<I', data, offset + 4, 24)
-    uuid_bytes = bytes([0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
-                        0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10])
-    data[offset + 8:offset + 24] = uuid_bytes
+    data[offset + 8:offset + 24] = bytes(range(16))
 
-    # Code signature command
     offset = 56
     struct.pack_into('<I', data, offset, MachOAnalyzer.LC_CODE_SIGNATURE)
     struct.pack_into('<I', data, offset + 4, 16)
-    struct.pack_into('<I', data, offset + 8, 0)  # dataoff
-    struct.pack_into('<I', data, offset + 12, 0)  # datasize
+    struct.pack_into('<I', data, offset + 8, 0)
+    struct.pack_into('<I', data, offset + 12, 0)
 
-    # Segment command
     offset = 72
     struct.pack_into('<I', data, offset, MachOAnalyzer.LC_SEGMENT_64)
     struct.pack_into('<I', data, offset + 4, 72)
     segname = b'__TEXT\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00'
     data[offset + 8:offset + 24] = segname[:16]
-    struct.pack_into('<Q', data, offset + 24, 0x100000000)  # vmaddr
-    struct.pack_into('<Q', data, offset + 32, 0x1000)  # vmsize
-    struct.pack_into('<Q', data, offset + 40, 0)  # fileoff
-    struct.pack_into('<Q', data, offset + 48, 0x1000)  # filesize
-    struct.pack_into('<I', data, offset + 56, 0)  # nsects
-    struct.pack_into('<I', data, offset + 60, 0)  # maxprot
+    struct.pack_into('<Q', data, offset + 24, 0x100000000)
+    struct.pack_into('<Q', data, offset + 32, 0x1000)
+    struct.pack_into('<Q', data, offset + 40, 0)
+    struct.pack_into('<Q', data, offset + 48, 0x1000)
+    struct.pack_into('<I', data, offset + 56, 0)
 
-    # Add library load command
     offset = 144
-    lib_cmd_size = 24 + len(b'/usr/lib/libSystem.B.dylib\x00')
-    lib_cmd_size = (lib_cmd_size + 7) & ~7  # align to 8
+    lib_cmd_size = (24 + len(b'/usr/lib/libSystem.B.dylib\x00') + 7) & ~7
     struct.pack_into('<I', data, offset, MachOAnalyzer.LC_LOAD_DYLIB)
     struct.pack_into('<I', data, offset + 4, lib_cmd_size)
-    struct.pack_into('<I', data, offset + 8, 24)  # name offset
-    struct.pack_into('<I', data, offset + 12, 0)  # timestamp
-    struct.pack_into('<I', data, offset + 16, 0)  # current_version
-    struct.pack_into('<I', data, offset + 20, 0)  # compat_version
-    lib_name = b'/usr/lib/libSystem.B.dylib\x00'
-    data[offset + 24:offset + 24 + len(lib_name)] = lib_name
+    struct.pack_into('<I', data, offset + 8, 24)
+    struct.pack_into('<I', data, offset + 12, 0)
+    struct.pack_into('<I', data, offset + 16, 0)
+    struct.pack_into('<I', data, offset + 20, 0)
+    data[offset + 24:offset + 24 + len(b'/usr/lib/libSystem.B.dylib\x00')] = b'/usr/lib/libSystem.B.dylib\x00'
 
-    # Fill rest with data
     data.extend(b'\x00' * (4096 - len(data)))
 
-    # Add some keychain-related strings
-    keychain_strs = [
-        b'kSecClass',
-        b'kSecClassGenericPassword',
-        b'SecItemAdd',
-        b'kSecAttrService',
-        b'kSecAttrAccount',
-        b'kSecReturnData',
+    markers = [
+        b'kSecClassGenericPassword', b'SecItemAdd', b'kSecAttrService',
+        b'NSAllowsArbitraryLoads', b'AWS_SECRET=AWSREDACTED_EXAMPLE',
+        b'com.apple.security.cs.disable-library-validation',
+        b'http://192.0.2.40/beacon', b'password=hunter2_lab',
     ]
-    for s in keychain_strs:
-        data.extend(s)
-        data.append(0)
+    for s in markers:
+        data.extend(s + b'\x00')
 
-    with open(sample_path, 'wb') as f:
-        f.write(data)
+    with open(path, 'wb') as f:
+        f.write(bytes(data))
+    return path
 
-    return sample_path
+
+def scan_interesting_strings(strings, keywords=("http", "password", "secret", "aws", "key")):
+    hits = []
+    for s in strings:
+        low = s["value"].lower()
+        if any(k in low for k in keywords):
+            hits.append(s)
+    return hits
+
+
+def run_demo(report_dir="reports"):
+    """Offline demo: craft fixture, analyze, write JSON. Returns exit code."""
+    os.makedirs(report_dir, exist_ok=True)
+    fixture = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                           "fixtures", "sample_macho.bin")
+    if not os.path.exists(fixture):
+        create_sample_binary(fixture)
+    binary_path = fixture
+
+    macho = MachOAnalyzer(binary_path)
+    if not macho.analyze():
+        return 1
+    with open(binary_path, 'rb') as f:
+        raw = f.read()
+    strings = extract_ascii_strings(raw)
+    entropy = shannon_entropy(raw)
+    keychain = KeychainAnalyzer()
+    keychain.scan_binary(raw)
+    interesting = scan_interesting_strings(strings)
+
+    report = {
+        "binary": macho.binary_name,
+        "magic": "FAT" if macho.is_fat else "MACH-O",
+        "cpu_type": macho.cpu_type,
+        "is_64bit": macho.is_64bit,
+        "file_type": macho.MH_FILETYPES.get(macho.file_type, "unknown"),
+        "uuid": macho.uuid,
+        "flags": macho.flags,
+        "segments": [s["name"] for s in macho.segments],
+        "libraries": sorted(macho.libraries),
+        "has_code_signature": macho.has_code_signature,
+        "is_encrypted": macho.is_encrypted,
+        "entry_point": macho.entry_point,
+        "strings_count": len(strings),
+        "interesting_strings": [{k: s[k] for k in ("offset", "value")} for s in interesting[:40]],
+        "keychain_refs": len(keychain.keychain_refs),
+        "entropy": entropy["overall"],
+    }
+    out = os.path.join(report_dir, "mo2_demo_report.json")
+    with open(out, "w") as f:
+        json.dump(report, f, indent=2)
+    print(f"[*] JSON report: {out}")
+    print(f"[*] CPU: {macho.cpu_type}  64-bit: {macho.is_64bit}  UUID: {macho.uuid}")
+    print(f"[*] Strings: {len(strings)}  Keychain refs: {len(keychain.keychain_refs)}  Entropy: {entropy['overall']}")
+    return 0
 
 
 def main():
-    """Main entry point."""
-    if len(sys.argv) < 2:
-        print("Usage: python3 ios_binary_analyzer.py <binary_file>")
-        print("\nGenerating sample binary for demonstration...")
-        binary_path = create_sample_binary()
-        print(f"Sample binary created at: {binary_path}")
-    else:
-        binary_path = sys.argv[1]
+    parser = argparse.ArgumentParser(
+        prog="ios_binary_analyzer",
+        description="MO2 — iOS binary analyzer (Mach-O, Info.plist, entitlements, strings).")
+    parser.add_argument("binary", nargs="?", help="Mach-O binary to analyze (omit for offline demo)")
+    parser.add_argument("--plist", help="Info.plist (XML or binary) to analyze")
+    parser.add_argument("--entitlements", help="entitlements plist file to analyze")
+    parser.add_argument("--json", action="store_true", help="write JSON report to reports/")
+    parser.add_argument("--report-dir", default="reports", help="report dir (default: reports)")
+    parser.add_argument("--make-fixture", action="store_true", help="build the crafted Mach-O fixture")
+    args = parser.parse_args()
 
-    if not os.path.exists(binary_path):
-        print(f"[!] File not found: {binary_path}")
-        sys.exit(1)
+    if args.make_fixture:
+        fixture = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                               "fixtures", "sample_macho.bin")
+        create_sample_binary(fixture)
+        print(f"[*] Fixture written: {fixture}")
+        return 0
 
-    # Analyze Mach-O binary
-    macho = MachOAnalyzer(binary_path)
+    if not args.binary:
+        return run_demo(args.report_dir)
+
+    if not os.path.exists(args.binary):
+        print(f"[!] File not found: {args.binary}")
+        return 2
+
+    macho = MachOAnalyzer(args.binary)
     if macho.analyze():
         macho.print_report()
-
-        # Keychain analysis
+        with open(args.binary, 'rb') as f:
+            raw = f.read()
         keychain = KeychainAnalyzer()
-        keychain.scan_binary(macho.data)
+        keychain.scan_binary(raw)
         keychain.analyze()
+        strings = extract_ascii_strings(raw)
+        entropy = shannon_entropy(raw)
+        print(f"\n[*] Strings: {len(strings)}  Entropy(overall): {entropy['overall']}")
 
-    # Create and analyze sample entitlements
-    print("\n[*] Creating sample entitlements for analysis...")
-    sample_entitlements = {
-        'com.apple.security.app-sandbox': True,
-        'com.apple.security.network.client': True,
-        'com.apple.security.network.server': False,
-        'com.apple.security.device.camera': True,
-        'com.apple.security.device.microphone': True,
-        'com.apple.security.cs.allow-unsigned-executable-memory': False,
-        'com.apple.security.personal-information.location': True,
-        'com.apple.security.files.user-selected.read-write': True,
-    }
+        if args.json:
+            os.makedirs(args.report_dir, exist_ok=True)
+            report = {
+                "binary": macho.binary_name,
+                "cpu_type": macho.cpu_type,
+                "is_64bit": macho.is_64bit,
+                "file_type": macho.MH_FILETYPES.get(macho.file_type, "unknown"),
+                "uuid": macho.uuid,
+                "flags": macho.flags,
+                "segments": [s["name"] for s in macho.segments],
+                "libraries": sorted(macho.libraries),
+                "has_code_signature": macho.has_code_signature,
+                "is_encrypted": macho.is_encrypted,
+                "strings_count": len(strings),
+                "keychain_refs": len(keychain.keychain_refs),
+                "entropy": entropy["overall"],
+            }
+            out = os.path.join(args.report_dir, os.path.basename(args.binary) + ".json")
+            with open(out, "w") as f:
+                json.dump(report, f, indent=2)
+            print(f"[*] JSON report: {out}")
 
-    extractor = EntitlementsExtractor()
-    extractor.entitlements = sample_entitlements
-    extractor.analyze()
+    if args.plist:
+        if not os.path.exists(args.plist):
+            print(f"[!] plist not found: {args.plist}")
+            return 2
+        pl = PlistAnalyzer(args.plist)
+        if pl.analyze():
+            pl.print_report()
 
-    print(f"\n{'='*60}")
-    print("  Analysis Complete")
-    print(f"{'='*60}\n")
+    if args.entitlements:
+        if not os.path.exists(args.entitlements):
+            print(f"[!] entitlements not found: {args.entitlements}")
+            return 2
+        extractor = EntitlementsExtractor()
+        extractor.extract_from_xml(args.entitlements)
+        extractor.analyze()
 
-
-if __name__ == '__main__':
-    main()
+    return 0

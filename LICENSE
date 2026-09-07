@@ -19,3 +19,54 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+================================================================================
+AUTHORIZATION REQUIRED — READ BEFORE USE
+================================================================================
+
+## IMPORTANT: Read before use.
+
+This software is provided strictly as an educational and authorized-security-testing
+reference implementation. It performs no actions against any system without the
+operator explicitly invoking it, and it ships only offline/demo fixtures. Using it
+against a system that you do not own or that you are not explicitly authorized to
+test may violate law.
+
+### Authorization
+- You MUST hold explicit written authorization before running this tool against
+  any APK, device, account, or network that you do not own.
+- Authorized use cases include: your own applications/devices/packages, authorized
+  penetration tests with a defined written scope, academic labs, and security research
+  in isolated environments you control.
+- Retain the written scope and authorization for your records.
+
+### CFAA and Computer Crime Statutes
+- In the United States, the Computer Fraud and Abuse Act (18 U.S.C. § 1030) criminalizes
+  unauthorized access to protected computers, including mobile devices and the servers
+  they talk to. Other jurisdictions have equivalent statutes (Computer Misuse Act UK,
+  Strafgesetzbuch § 202a/b Germany, Penal Code provisions in most states).
+- "Authorized" means express permission from the owner — a bug-bounty scope page,
+  a signed engagement, or ownership.
+- This project does not grant you any authority that the law does not.
+
+### Acceptable Use
+- Analysis of APKs/binaries you authored or own.
+- Deliberate, scoped, and written-authorized assessment engagements.
+- Offline academic and training exercises on provided fixtures.
+
+### Prohibited Use
+- Analyzing application packages you do not own or lack authorization for.
+- Any use that circumvents law, terms of service, or third-party rights.
+- Repackaging, redistributing, or weaponizing this tool for unauthorized purposes.
+
+### No Warranty
+This software is provided "AS IS", without warranty of any kind, express or implied,
+including but not limited to the warranties of merchantability, fitness for a particular
+purpose, or noninfringement. The author(s) are not liable for any misuse or damage.
+
+### Responsible Disclosure
+If you identify a genuine vulnerability during an authorized engagement:
+1. Report it privately to the vendor/owner.
+2. Allow a reasonable disclosure window (typically 90 days).
+3. Do not exceed proof-of-concept scope.
+4. Publish only after coordination with the affected party.
