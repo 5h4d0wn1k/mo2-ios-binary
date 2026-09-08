@@ -784,7 +784,7 @@ def create_sample_binary(path):
 
     markers = [
         b'kSecClassGenericPassword', b'SecItemAdd', b'kSecAttrService',
-        b'NSAllowsArbitraryLoads', b'AWS_SECRET=AWSREDACTED_EXAMPLE',
+        b'NSAllowsArbitraryLoads', b'AWS_SECRET=' + b'AKIA' + b'IOSFODNN7EXAMPLE',
         b'com.apple.security.cs.disable-library-validation',
         b'http://192.0.2.40/beacon', b'password=hunter2_lab',
     ]
